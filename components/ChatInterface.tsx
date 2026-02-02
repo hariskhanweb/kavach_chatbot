@@ -50,6 +50,9 @@ export default function ChatInterface() {
   const dateInputRef = useRef<HTMLInputElement>(null)
   const [isRecording, setIsRecording] = useState(false)
   const [recordingDuration, setRecordingDuration] = useState(0)
+  // Kept for runtime compatibility (e.g. other copies of this component); stop now sends directly
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
   const voiceRecorderRef = useRef<VoiceRecorder | null>(null)
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
