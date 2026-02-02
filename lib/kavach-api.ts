@@ -4,6 +4,7 @@ import {
   INITIATE_ACTIVATION_ENDPOINT,
   SUBMIT_ANSWER_ENDPOINT,
   INVOICE_UPLOAD_ENDPOINT,
+  VOICE_NOTE_UPLOAD_ENDPOINT,
 } from './chatbots'
 
 export interface Question {
@@ -50,6 +51,52 @@ export interface InvoiceUploadResponse {
   file_keys?: string[]
   bucket?: string
   message?: string
+}
+
+export interface VoiceNoteUploadResponse {
+  success: boolean
+  file_key?: string
+  bucket?: string
+  message?: string
+}
+
+/**
+ * Upload voice note (WAV or webm/opus from MediaRecorder) to S3.
+ * POST /api/v1/partner/kavach-activation/{customer_uuid}/upload-voice-note/
+ * Request: form field "file" (audio/wav or audio/webm).
+ * Response: success, file_key, bucket, message.
+ */
+export async function uploadVoiceNoteToS3(
+  audioBlob: Blob,
+  customerUuid: string
+): Promise<VoiceNoteUploadResponse> {
+  const endpoint = VOICE_NOTE_UPLOAD_ENDPOINT(customerUuid)
+  const formData = new FormData()
+  const isWav = audioBlob.type === 'audio/wav'
+  const filename = isWav ? 'voice-note.wav' : 'voice-note.webm'
+  const file = new File([audioBlob], filename, { type: audioBlob.type || 'audio/webm' })
+  formData.append('file', file)
+
+  const response = await fetch(endpoint, {
+    method: 'POST',
+    body: formData,
+  })
+
+  if (!response.ok) {
+    const error = await response.json().catch(() => ({ error: 'Failed to upload voice note' }))
+    throw new Error(error.error || error.message || 'Failed to upload voice note')
+  }
+
+  const data = await response.json()
+  if (!data.file_key) {
+    throw new Error('Invalid response from voice note upload: missing file_key')
+  }
+  return {
+    success: data.success !== undefined ? data.success : true,
+    file_key: data.file_key,
+    bucket: data.bucket,
+    message: data.message,
+  }
 }
 
 /**
@@ -146,10 +193,24 @@ export async function submitAnswer(
 ): Promise<SubmitAnswerResponse> {
   const endpoint = SUBMIT_ANSWER_ENDPOINT(customerUuid)
 
+  // Handle voice note: answer is already-uploaded file_key (from uploadVoiceNoteToS3)
+  if (questionType === 'file' && typeof answer === 'string') {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ field, answer: [answer] }),
+    })
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ error: 'Failed to submit answer' }))
+      throw new Error(error.error || error.message || 'Failed to submit answer')
+    }
+    return response.json()
+  }
+
   // Handle file upload - upload to S3 first (single or multiple), then submit file_key(s)
   if ((answer instanceof File || Array.isArray(answer)) && questionType === 'file') {
     try {
-      const files = answer instanceof File ? [answer] : answer
+      const files: File[] = answer instanceof File ? [answer] : answer
       if (files.length === 0) {
         throw new Error('No file(s) to upload')
       }

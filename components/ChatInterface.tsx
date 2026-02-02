@@ -8,11 +8,13 @@ import { CHATBOT_NAME } from '@/lib/chatbots'
 import {
   initiateActivation,
   submitAnswer,
+  uploadVoiceNoteToS3,
   type Question,
   type SubmitAnswerResponse,
   type ActivationDetails,
   type InitiateResponse,
 } from '@/lib/kavach-api'
+import { VoiceRecorder } from '@/lib/voice-recorder'
 
 interface Message {
   id: string
@@ -22,6 +24,8 @@ interface Message {
   type?: 'question' | 'answer' | 'system' | 'completion'
   question?: Question
   activationDetails?: ActivationDetails
+  /** Object URL for voice note playback (user messages) */
+  voiceNoteBlobUrl?: string
 }
 
 export default function ChatInterface() {
@@ -44,6 +48,11 @@ export default function ChatInterface() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const textInputRef = useRef<HTMLTextAreaElement>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
+  const [isRecording, setIsRecording] = useState(false)
+  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
+  const [recordingDuration, setRecordingDuration] = useState(0)
+  const voiceRecorderRef = useRef<VoiceRecorder | null>(null)
+  const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -117,51 +126,74 @@ export default function ChatInterface() {
 
 
   // Initialize activation on mount using partner_id from URL
+  // FOR TESTING: skip initiate API and use mock data so UI loads. Re-enable when testing is done.
+  const SKIP_INITIATE_FOR_TESTING = true
   useEffect(() => {
     setIsMounted(true)
-    
-    const partnerId = searchParams.get('partner_id')
-    
-    if (!partnerId) {
-      setError('Missing partner_id parameter in URL. Please provide ?partner_id=YOUR_PARTNER_ID')
-      return
-    }
-
     if (isInitialized) return
 
     const initializeActivation = async () => {
       setIsLoading(true)
       setError(null)
-      
+
+      if (SKIP_INITIATE_FOR_TESTING) {
+        // Bypass API: use mock data so chat UI loads for testing
+        const mockCustomerUuid = 'test-customer-uuid'
+        const mockQuestion: Question = {
+          field: 'test_field',
+          question: 'What is your email? (testing mode – submit will call real API)',
+          type: 'email',
+          required: true,
+          question_number: 1,
+          total_questions: 1,
+          choices: undefined,
+        }
+        setCustomerUuid(mockCustomerUuid)
+        setCurrentPhase('test')
+        setCurrentQuestion(mockQuestion)
+        localStorage.setItem('chatbot_customer_uuid', mockCustomerUuid)
+        setIsInitialized(true)
+        setMessages([
+          {
+            id: '1',
+            text: mockQuestion.question,
+            isUser: false,
+            timestamp: getCurrentTime(),
+            type: 'question',
+            question: mockQuestion,
+          },
+        ])
+        setTimeout(() => textInputRef.current?.focus(), 100)
+        setIsLoading(false)
+        return
+      }
+
+      const partnerId = searchParams.get('partner_id')
+      if (!partnerId) {
+        setError('Missing partner_id parameter in URL. Please provide ?partner_id=YOUR_PARTNER_ID')
+        setIsLoading(false)
+        return
+      }
+
       try {
-        // Call initiate API with partner_id as partner_email
         const response: InitiateResponse = await initiateActivation(partnerId)
-        
-        // Store customer_uuid for all subsequent requests
         setCustomerUuid(response.customer_uuid)
         setCurrentPhase(response.current_phase)
         setCurrentQuestion(response.question)
-        
-        // Store in localStorage for persistence
         localStorage.setItem('chatbot_customer_uuid', response.customer_uuid)
         localStorage.setItem('chatbot_partner_id', response.partner_id)
         localStorage.setItem('chatbot_partner_email', response.partner_email)
-        
         setIsInitialized(true)
-        
-        // Start conversation with the first question from API
-        const questionMessage: Message = {
-          id: '1',
-          text: response.question.question,
-          isUser: false,
-          timestamp: getCurrentTime(),
-          type: 'question',
-          question: response.question,
-        }
-        
-        setMessages([questionMessage])
-        
-        // Focus input for first question (only if not choice or file type)
+        setMessages([
+          {
+            id: '1',
+            text: response.question.question,
+            isUser: false,
+            timestamp: getCurrentTime(),
+            type: 'question',
+            question: response.question,
+          },
+        ])
         if (response.question.type !== 'choice' && response.question.type !== 'file') {
           setTimeout(() => {
             if (response.question.type === 'date') {
@@ -174,8 +206,8 @@ export default function ChatInterface() {
       } catch (error) {
         console.error('Error initiating activation:', error)
         setError(
-          error instanceof Error 
-            ? error.message 
+          error instanceof Error
+            ? error.message
             : 'Failed to initiate activation. Please check your partner_id and try again.'
         )
       } finally {
@@ -248,12 +280,12 @@ export default function ChatInterface() {
         userMessageText = `📎 ${answer.name}`
         setUploadingFiles([answer.name])
       } else if (Array.isArray(answer)) {
-        userMessageText = `📎 ${answer.length} file(s): ${answer.map(f => f.name).join(', ')}`
-        setUploadingFiles(answer.map(f => f.name))
+        userMessageText = `📎 ${answer.length} file(s): ${answer.map((f) => f.name).join(', ')}`
+        setUploadingFiles(answer.map((f) => f.name))
       } else if (typeof answer === 'string' && answer.startsWith('http')) {
         userMessageText = `📎 File uploaded via S3: ${answer}`
       } else {
-        userMessageText = answer
+        userMessageText = typeof answer === 'string' ? answer : ''
       }
 
       const userMessage: Message = {
@@ -427,6 +459,182 @@ export default function ChatInterface() {
     }
   }
 
+  const startVoiceRecording = async () => {
+    if (!currentQuestion || isLoading || isComplete) return
+    try {
+      const recorder = new VoiceRecorder({
+        onError: () => {
+          // Error is shown in catch below to avoid duplicate messages
+        },
+      })
+      voiceRecorderRef.current = recorder
+      await recorder.start()
+      setIsRecording(true)
+      setRecordedBlob(null)
+      setRecordingDuration(0)
+      recordingIntervalRef.current = setInterval(() => {
+        setRecordingDuration((d) => d + 1)
+      }, 1000)
+    } catch (err) {
+      console.error('Voice recording start error:', err)
+      const msg = err instanceof Error ? err.message : 'Unknown error'
+      const hint =
+        typeof window !== 'undefined' && !window.isSecureContext
+          ? ' On mobile use HTTPS and allow microphone in site settings.'
+          : ''
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          text: `Could not start recording: ${msg}.${hint}`,
+          isUser: false,
+          timestamp: getCurrentTime(),
+          type: 'system',
+        },
+      ])
+    }
+  }
+
+  const stopVoiceRecording = async () => {
+    const recorder = voiceRecorderRef.current
+    if (!recorder || !recorder.isRecording) return
+    try {
+      const blob = await recorder.stop()
+      voiceRecorderRef.current = null
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current)
+        recordingIntervalRef.current = null
+      }
+      setIsRecording(false)
+      setRecordedBlob(blob)
+      setRecordingDuration(0)
+    } catch (err) {
+      console.error('Stop recording error:', err)
+      voiceRecorderRef.current = null
+      if (recordingIntervalRef.current) {
+        clearInterval(recordingIntervalRef.current)
+        recordingIntervalRef.current = null
+      }
+      setIsRecording(false)
+      setRecordedBlob(null)
+      setRecordingDuration(0)
+    }
+  }
+
+  const cancelVoiceNote = () => {
+    if (voiceRecorderRef.current?.isRecording) {
+      voiceRecorderRef.current.stop().catch(() => {})
+      voiceRecorderRef.current = null
+    }
+    if (recordingIntervalRef.current) {
+      clearInterval(recordingIntervalRef.current)
+      recordingIntervalRef.current = null
+    }
+    setIsRecording(false)
+    setRecordedBlob(null)
+    setRecordingDuration(0)
+  }
+
+  const sendVoiceNote = async () => {
+    if (!recordedBlob || !customerUuid || !currentQuestion) return
+    const blob = recordedBlob
+    setRecordedBlob(null)
+    const blobUrl = URL.createObjectURL(blob)
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      text: '🎤 Voice note',
+      isUser: true,
+      timestamp: getCurrentTime(),
+      type: 'answer',
+      voiceNoteBlobUrl: blobUrl,
+    }
+    setMessages((prev) => [...prev, userMessage])
+    setInput('')
+    setIsLoading(true)
+    setIsUploading(true)
+    setUploadingFiles([blob.type === 'audio/wav' ? 'voice-note.wav' : 'voice-note.webm'])
+    try {
+      const uploadResponse = await uploadVoiceNoteToS3(blob, customerUuid)
+      const fileKey = uploadResponse.file_key
+      if (!fileKey) throw new Error('No file_key from voice note upload')
+      const response: SubmitAnswerResponse = await submitAnswer(
+        customerUuid,
+        currentQuestion.field,
+        fileKey,
+        'file'
+      )
+      setCurrentPhase(response.current_phase)
+      if (response.activation_details) {
+        setIsComplete(true)
+        const completionMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: `✅ Activation completed successfully!\n\n📋 Activation Details:\n• Activation ID: ${response.activation_details.activation_id}\n• Sale ID: ${response.activation_details.sale_id}\n• Policy Serial: ${response.activation_details.policy_serial}\n• Plan: ${response.activation_details.plan_name}\n• Price: ₹${response.activation_details.customer_price}\n• Activation Date: ${response.activation_details.activation_date}\n• Expiry Date: ${response.activation_details.expiry_date}`,
+          isUser: false,
+          timestamp: getCurrentTime(),
+          type: 'completion',
+          activationDetails: response.activation_details,
+        }
+        setMessages((prev) => [...prev, completionMessage])
+        setCurrentQuestion(null)
+      } else if (response.next_question) {
+        const phaseMsg = response.message
+        if (phaseMsg && !phaseMsg.toLowerCase().includes('answer saved')) {
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: (Date.now() + 1).toString(),
+              text: phaseMsg,
+              isUser: false,
+              timestamp: getCurrentTime(),
+              type: 'completion',
+            },
+          ])
+        }
+        const nextQuestion = response.next_question
+        if (nextQuestion) {
+          setCurrentQuestion(nextQuestion)
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: (Date.now() + 2).toString(),
+              text: nextQuestion.question,
+              isUser: false,
+              timestamp: getCurrentTime(),
+              type: 'question',
+              question: nextQuestion,
+            },
+          ])
+          if (nextQuestion.type !== 'choice' && nextQuestion.type !== 'file') {
+            setTimeout(() => {
+              if (nextQuestion.type === 'date') dateInputRef.current?.focus()
+              else textInputRef.current?.focus()
+            }, 100)
+          }
+        } else {
+          setIsComplete(true)
+        }
+      } else {
+        setIsComplete(true)
+      }
+    } catch (error) {
+      console.error('Voice note submit error:', error)
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: (Date.now() + 1).toString(),
+          text: `Sorry, I encountered an error: ${error instanceof Error ? error.message : 'Failed to send voice note'}. Please try again.`,
+          isUser: false,
+          timestamp: getCurrentTime(),
+          type: 'system',
+        },
+      ])
+    } finally {
+      setIsLoading(false)
+      setIsUploading(false)
+      setUploadingFiles([])
+    }
+  }
+
   // Show error or loading state if not initialized
   if (!isMounted || !isInitialized) {
     return (
@@ -498,6 +706,7 @@ export default function ChatInterface() {
               type={message.type}
               question={message.question}
               activationDetails={message.activationDetails}
+              voiceNoteBlobUrl={message.voiceNoteBlobUrl}
               onChoiceSelect={handleChoiceSelect}
               isLoading={isLoading}
             />
@@ -633,8 +842,71 @@ export default function ChatInterface() {
           </div>
         )}
         
+        {/* Voice note recording bar - WhatsApp style */}
+        {!isComplete && currentQuestion && (isRecording || recordedBlob) && (
+          <div className="flex items-center gap-3 py-2 px-3 bg-[#2A3942] rounded-lg">
+            {isRecording ? (
+              <>
+                <div className="flex items-center gap-2 flex-1">
+                  <div className="flex items-end gap-0.5 h-5">
+                    {[4, 8, 6, 10, 5].map((h, i) => (
+                      <div
+                        key={i}
+                        className="w-1 bg-[#00A884] rounded-full animate-pulse"
+                        style={{ height: h, animationDelay: `${i * 0.15}s` }}
+                      />
+                    ))}
+                  </div>
+                  <span className="text-sm text-[#8696A0]">
+                    {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+                  </span>
+                </div>
+                <button
+                  type="button"
+                  onClick={stopVoiceRecording}
+                  className="bg-[#00A884] text-white rounded-full p-2.5 hover:bg-[#06CF9C] transition-colors"
+                  aria-label="Stop recording"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M5 5v10h10V5H5zM3 3a2 2 0 012-2h10a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V3z" clipRule="evenodd" />
+                  </svg>
+                </button>
+              </>
+            ) : recordedBlob ? (
+              <>
+                <div className="flex items-center gap-2 flex-1">
+                  <span className="text-[#00A884]">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                    </svg>
+                  </span>
+                  <span className="text-sm text-white">Voice note ready</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={cancelVoiceNote}
+                  className="text-[#8696A0] hover:text-white text-sm font-medium px-3 py-1.5 rounded"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={sendVoiceNote}
+                  disabled={isLoading}
+                  className="bg-[#00A884] text-white rounded-full p-2.5 hover:bg-[#06CF9C] disabled:opacity-50 transition-colors"
+                  aria-label="Send voice note"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                  </svg>
+                </button>
+              </>
+            ) : null}
+          </div>
+        )}
+
         {/* Text/Number/Date input area - Hidden for choice and file questions */}
-        {!isComplete && currentQuestion && currentQuestion.type !== 'choice' && currentQuestion.type !== 'file' && (
+        {!isComplete && currentQuestion && currentQuestion.type !== 'choice' && currentQuestion.type !== 'file' && !isRecording && !recordedBlob && (
         <div className="flex items-start space-x-2">
           <div className="flex-1 relative">
             {currentQuestion?.type === 'date' ? (
@@ -660,6 +932,18 @@ export default function ChatInterface() {
               />
             )}
           </div>
+          <button
+            type="button"
+            onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
+            disabled={isLoading || isComplete || !currentQuestion}
+            className="bg-[#2A3942] text-[#8696A0] hover:text-[#00A884] rounded-full p-3 hover:bg-[#344047] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+            aria-label={isRecording ? 'Stop recording' : 'Record voice note'}
+            title="Record voice note"
+          >
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+              <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+            </svg>
+          </button>
           <button
             onClick={handleSend}
             disabled={isLoading || isComplete || !currentQuestion || !input.trim()}
