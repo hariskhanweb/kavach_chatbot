@@ -1,5 +1,6 @@
 'use client'
 
+import { useState, useRef, useEffect } from 'react'
 import type { Question, ActivationDetails } from '@/lib/kavach-api'
 
 interface ChatMessageProps {
@@ -25,6 +26,58 @@ export default function ChatMessage({
   onChoiceSelect,
   isLoading = false,
 }: ChatMessageProps) {
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [currentTime, setCurrentTime] = useState(0)
+  const [duration, setDuration] = useState(0)
+  const audioRef = useRef<HTMLAudioElement>(null)
+
+  useEffect(() => {
+    const audio = audioRef.current
+    if (!audio) return
+
+    const updateTime = () => setCurrentTime(audio.currentTime)
+    const updateDuration = () => setDuration(audio.duration)
+    const handlePlay = () => setIsPlaying(true)
+    const handlePause = () => setIsPlaying(false)
+    const handleEnded = () => {
+      setIsPlaying(false)
+      setCurrentTime(0)
+    }
+
+    audio.addEventListener('timeupdate', updateTime)
+    audio.addEventListener('loadedmetadata', updateDuration)
+    audio.addEventListener('play', handlePlay)
+    audio.addEventListener('pause', handlePause)
+    audio.addEventListener('ended', handleEnded)
+
+    return () => {
+      audio.removeEventListener('timeupdate', updateTime)
+      audio.removeEventListener('loadedmetadata', updateDuration)
+      audio.removeEventListener('play', handlePlay)
+      audio.removeEventListener('pause', handlePause)
+      audio.removeEventListener('ended', handleEnded)
+    }
+  }, [voiceNoteBlobUrl])
+
+  const togglePlayPause = () => {
+    const audio = audioRef.current
+    if (!audio) return
+
+    if (isPlaying) {
+      audio.pause()
+    } else {
+      audio.play()
+    }
+  }
+
+  const formatTime = (seconds: number): string => {
+    if (isNaN(seconds)) return '0:00'
+    const mins = Math.floor(seconds / 60)
+    const secs = Math.floor(seconds % 60)
+    return `${mins}:${secs.toString().padStart(2, '0')}`
+  }
+
+  const progress = duration > 0 ? (currentTime / duration) * 100 : 0
   // Determine message styling based on type
   const getMessageStyles = () => {
     if (isUser) {
@@ -50,12 +103,52 @@ export default function ChatMessage({
         {voiceNoteBlobUrl ? (
           <div className="flex flex-col gap-2">
             <p className="text-sm leading-relaxed mb-0.5">{message}</p>
-            <audio
-              src={voiceNoteBlobUrl}
-              controls
-              className="w-full max-w-[240px] h-9 accent-[#00A884]"
-              preload="metadata"
-            />
+            <div className="flex items-center gap-2 bg-black/20 rounded-lg px-2 py-1.5 max-w-[240px]">
+              {/* Play/Pause Button */}
+              <button
+                onClick={togglePlayPause}
+                className="shrink-0 w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center transition-colors"
+                aria-label={isPlaying ? 'Pause' : 'Play'}
+              >
+                {isPlaying ? (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4 text-white"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path
+                      fillRule="evenodd"
+                      d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zM7 8a1 1 0 012 0v4a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v4a1 1 0 102 0V8a1 1 0 00-1-1z"
+                      clipRule="evenodd"
+                    />
+                  </svg>
+                ) : (
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    className="h-4 w-4 text-white ml-0.5"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                  >
+                    <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+                  </svg>
+                )}
+              </button>
+
+              {/* Progress Bar */}
+              <div className="flex-1 flex items-center gap-2">
+                <div className="flex-1 h-1 bg-white/20 rounded-full overflow-hidden">
+                  <div
+                    className="h-full bg-white/70 rounded-full transition-all duration-100"
+                    style={{ width: `${progress}%` }}
+                  />
+                </div>
+                <span className="text-xs text-white/70 font-mono min-w-10 text-right">
+                  {formatTime(currentTime)} / {formatTime(duration)}
+                </span>
+              </div>
+            </div>
+            <audio ref={audioRef} src={voiceNoteBlobUrl} preload="metadata" />
           </div>
         ) : (
           <p className="text-sm leading-relaxed whitespace-pre-wrap wrap-break-word mb-0.5">

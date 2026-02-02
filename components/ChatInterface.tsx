@@ -74,53 +74,170 @@ export default function ChatInterface() {
   const validateAnswer = (answer: string, question: Question): string | null => {
     const field = question.field.toLowerCase()
     const type = question.type
+    const trimmed = answer.trim()
+
+    // Required field validation (check first)
+    if (question.required && !trimmed) {
+      return 'This field is required'
+    }
+
+    // Skip further validation if empty and not required
+    if (!trimmed && !question.required) {
+      return null
+    }
+
+    // Text validation - character limits
+    if (type === 'text') {
+      const maxLength = 500 // Reasonable limit for text fields
+      if (trimmed.length > maxLength) {
+        return `Text cannot exceed ${maxLength} characters (current: ${trimmed.length})`
+      }
+      // Check for valid text (not just whitespace or special chars only)
+      if (trimmed.length > 0 && /^\s*$/.test(trimmed)) {
+        return 'Please enter valid text'
+      }
+    }
+
+    // Textarea validation - larger character limits
+    if (type === 'textarea') {
+      const maxLength = 2000 // Larger limit for textarea
+      if (trimmed.length > maxLength) {
+        return `Text cannot exceed ${maxLength} characters (current: ${trimmed.length})`
+      }
+      if (trimmed.length > 0 && /^\s*$/.test(trimmed)) {
+        return 'Please enter valid text'
+      }
+    }
+
+    // Number validation - check for valid number format and reasonable limits
+    if (type === 'number') {
+      const numValue = trimmed
+      
+      // Check if it's a valid number (allows decimals, negative, scientific notation)
+      if (!/^-?\d*\.?\d+([eE][+-]?\d+)?$/.test(numValue) && numValue !== '') {
+        return 'Please enter a valid number (e.g., 123, 45.67, -10)'
+      }
+      
+      const num = Number(numValue)
+      if (isNaN(num)) {
+        return 'Please enter a valid number'
+      }
+      
+      // Reasonable number limits (adjust as needed)
+      const maxValue = 999999999999 // 12 digits max
+      const minValue = -999999999999
+      if (num > maxValue) {
+        return `Number cannot exceed ${maxValue.toLocaleString()}`
+      }
+      if (num < minValue) {
+        return `Number cannot be less than ${minValue.toLocaleString()}`
+      }
+      
+      // Check for excessive decimal places (limit to 2 for most cases)
+      if (numValue.includes('.') && numValue.split('.')[1]?.length > 10) {
+        return 'Number cannot have more than 10 decimal places'
+      }
+    }
 
     // Email validation
     if (type === 'email' || field.includes('email')) {
       const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-      if (!emailRegex.test(answer.trim())) {
+      if (!emailRegex.test(trimmed)) {
         return 'Please enter a valid email address (e.g., example@domain.com)'
+      }
+      // Email length limit (RFC 5321)
+      if (trimmed.length > 254) {
+        return 'Email address cannot exceed 254 characters'
       }
     }
 
-    // Phone validation
-    if (field.includes('phone') || field.includes('mobile') || field.includes('contact')) {
-      const digitsOnly = answer.replace(/\D/g, '')
-      if (digitsOnly.length < 10 || digitsOnly.length > 15) {
-        return 'Please enter a valid phone number (10-15 digits)'
+    // Phone validation - mobile phone number with max 13 digits, allows + sign
+    if (field.includes('phone') || field.includes('mobile') || field.includes('contact') || question.question.toLowerCase().includes('phone number')) {
+      // Check if only numbers and + sign are allowed (and + only at start)
+      const phoneRegex = /^\+?[0-9]+$/
+      if (!phoneRegex.test(trimmed)) {
+        return 'Phone number can only contain numbers and an optional + sign at the start'
+      }
+      
+      // Count only digits (not + sign)
+      const digitsOnly = trimmed.replace(/\D/g, '')
+      if (digitsOnly.length === 0) {
+        return 'Please enter a valid phone number'
+      }
+      
+      // Max 13 digits
+      if (digitsOnly.length > 13) {
+        return 'Phone number cannot exceed 13 digits'
+      }
+      
+      // Minimum validation (at least some digits)
+      if (digitsOnly.length < 10) {
+        return 'Please enter a valid phone number (minimum 10 digits)'
       }
     }
 
     // Pincode validation
     if (field.includes('pincode') || field.includes('pin') || field.includes('postal')) {
       const pincodeRegex = /^\d{6}$/
-      if (!pincodeRegex.test(answer.trim())) {
+      if (!pincodeRegex.test(trimmed)) {
         return 'Please enter a valid 6-digit pincode'
       }
     }
 
-    // Number validation
-    if (type === 'number') {
-      if (isNaN(Number(answer.trim()))) {
-        return 'Please enter a valid number'
+    // Invoice number validation - only numbers allowed
+    if (field.includes('invoice') && field.includes('number')) {
+      const invoiceNumberRegex = /^\d+$/
+      if (!invoiceNumberRegex.test(trimmed)) {
+        return 'Invoice number can only contain numbers'
+      }
+      // Reasonable length limit for invoice numbers
+      if (trimmed.length > 50) {
+        return 'Invoice number cannot exceed 50 digits'
+      }
+      if (trimmed.length === 0) {
+        return 'Please enter an invoice number'
+      }
+    }
+
+    // Warranty period validation - number between 1 and 36
+    if (
+      (field.includes('warranty') && field.includes('period')) ||
+      question.question.toLowerCase().includes('warranty period')
+    ) {
+      const warrantyRegex = /^\d+$/
+      if (!warrantyRegex.test(trimmed)) {
+        return 'Warranty period must be a number'
+      }
+      const warrantyMonths = parseInt(trimmed, 10)
+      if (isNaN(warrantyMonths)) {
+        return 'Please enter a valid number for warranty period'
+      }
+      if (warrantyMonths < 1) {
+        return 'Warranty period must be at least 1 month'
+      }
+      if (warrantyMonths > 36) {
+        return 'Warranty period cannot exceed 36 months'
       }
     }
 
     // Date validation (for text input dates)
     if (type === 'date') {
       const dateRegex = /^\d{4}-\d{2}-\d{2}$/
-      if (!dateRegex.test(answer.trim())) {
+      if (!dateRegex.test(trimmed)) {
         return 'Please enter a valid date in YYYY-MM-DD format'
       }
-      const date = new Date(answer.trim())
+      const date = new Date(trimmed)
       if (isNaN(date.getTime())) {
         return 'Please enter a valid date'
       }
     }
 
-    // Required field validation
-    if (question.required && !answer.trim()) {
-      return 'This field is required'
+    // General character limit for other text-based types (fallback)
+    if (type !== 'file' && type !== 'choice' && type !== 'select' && !['email', 'number', 'date', 'phone'].includes(type)) {
+      const maxLength = 1000 // Default limit for unspecified text types
+      if (trimmed.length > maxLength) {
+        return `Input cannot exceed ${maxLength} characters (current: ${trimmed.length})`
+      }
     }
 
     return null
@@ -128,8 +245,6 @@ export default function ChatInterface() {
 
 
   // Initialize activation on mount using partner_id from URL
-  // FOR TESTING: skip initiate API and use mock data so UI loads. Re-enable when testing is done.
-  const SKIP_INITIATE_FOR_TESTING = true
   useEffect(() => {
     setIsMounted(true)
     if (isInitialized) return
@@ -137,38 +252,6 @@ export default function ChatInterface() {
     const initializeActivation = async () => {
       setIsLoading(true)
       setError(null)
-
-      if (SKIP_INITIATE_FOR_TESTING) {
-        // Bypass API: use mock data so chat UI loads for testing
-        const mockCustomerUuid = 'test-customer-uuid'
-        const mockQuestion: Question = {
-          field: 'test_field',
-          question: 'What is your email? (testing mode – submit will call real API)',
-          type: 'email',
-          required: true,
-          question_number: 1,
-          total_questions: 1,
-          choices: undefined,
-        }
-        setCustomerUuid(mockCustomerUuid)
-        setCurrentPhase('test')
-        setCurrentQuestion(mockQuestion)
-        localStorage.setItem('chatbot_customer_uuid', mockCustomerUuid)
-        setIsInitialized(true)
-        setMessages([
-          {
-            id: '1',
-            text: mockQuestion.question,
-            isUser: false,
-            timestamp: getCurrentTime(),
-            type: 'question',
-            question: mockQuestion,
-          },
-        ])
-        setTimeout(() => textInputRef.current?.focus(), 100)
-        setIsLoading(false)
-        return
-      }
 
       const partnerId = searchParams.get('partner_id')
       if (!partnerId) {
@@ -454,6 +537,140 @@ export default function ChatInterface() {
     }
   }
 
+  const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement | HTMLInputElement>) => {
+    let value = e.target.value
+    
+    if (currentQuestion) {
+      const field = currentQuestion.field.toLowerCase()
+      const type = currentQuestion.type
+      
+      // Filter phone number input: only allow numbers and + sign (at start only)
+      const isPhoneQuestion = 
+        field.includes('phone') || 
+        field.includes('mobile') || 
+        field.includes('contact') || 
+        currentQuestion.question.toLowerCase().includes('phone number')
+      
+      if (isPhoneQuestion) {
+        // Allow + only at the start, then only digits
+        if (value.startsWith('+')) {
+          // After +, only digits allowed
+          value = '+' + value.slice(1).replace(/[^0-9]/g, '')
+        } else {
+          // No +, only digits allowed
+          value = value.replace(/[^0-9]/g, '')
+        }
+        
+        // Limit to 13 digits (not counting +)
+        const digitsOnly = value.replace(/\D/g, '')
+        if (digitsOnly.length > 13) {
+          value = value.slice(0, value.length - (digitsOnly.length - 13))
+        }
+      }
+      
+      // Filter pincode input: only allow numbers, max 6 digits
+      const isPincodeQuestion = 
+        field.includes('pincode') || 
+        field.includes('pin') || 
+        field.includes('postal') ||
+        currentQuestion.question.toLowerCase().includes('pincode')
+      
+      if (isPincodeQuestion) {
+        // Only allow digits
+        value = value.replace(/[^0-9]/g, '')
+        
+        // Limit to 6 digits
+        if (value.length > 6) {
+          value = value.slice(0, 6)
+        }
+      }
+      
+      // Filter invoice number input: only allow numbers
+      const isInvoiceNumberQuestion = 
+        (field.includes('invoice') && field.includes('number')) ||
+        currentQuestion.question.toLowerCase().includes('invoice number')
+      
+      if (isInvoiceNumberQuestion) {
+        // Only allow digits
+        value = value.replace(/[^0-9]/g, '')
+        
+        // Limit to 50 digits (reasonable limit for invoice numbers)
+        if (value.length > 50) {
+          value = value.slice(0, 50)
+        }
+      }
+      
+      // Filter warranty period input: only allow numbers, enforce 1-36 range
+      const isWarrantyPeriodQuestion = 
+        (field.includes('warranty') && field.includes('period')) ||
+        currentQuestion.question.toLowerCase().includes('warranty period')
+      
+      if (isWarrantyPeriodQuestion) {
+        // Only allow digits
+        value = value.replace(/[^0-9]/g, '')
+        
+        // Limit to 2 digits (max 36)
+        if (value.length > 2) {
+          value = value.slice(0, 2)
+        }
+        
+        // Enforce max value of 36
+        const numValue = parseInt(value, 10)
+        if (!isNaN(numValue) && numValue > 36) {
+          value = '36'
+        }
+      }
+      
+      // Filter number input: only allow numbers, decimal point, negative sign, and scientific notation
+      if (type === 'number') {
+        // Allow: digits, one decimal point, negative sign at start, e/E for scientific notation
+        value = value.replace(/[^0-9.\-eE]/g, '')
+        
+        // Ensure only one decimal point
+        const parts = value.split('.')
+        if (parts.length > 2) {
+          value = parts[0] + '.' + parts.slice(1).join('')
+        }
+        
+        // Ensure negative sign only at start
+        if (value.includes('-')) {
+          const hasNegativeAtStart = value.startsWith('-')
+          value = (hasNegativeAtStart ? '-' : '') + value.replace(/-/g, '')
+        }
+        
+        // Limit to reasonable length (e.g., 20 characters for very large numbers)
+        if (value.length > 20) {
+          value = value.slice(0, 20)
+        }
+      }
+      
+      // Enforce character limits for text and textarea
+      if (type === 'text') {
+        const maxLength = 500
+        if (value.length > maxLength) {
+          value = value.slice(0, maxLength)
+        }
+      }
+      
+      if (type === 'textarea') {
+        const maxLength = 2000
+        if (value.length > maxLength) {
+          value = value.slice(0, maxLength)
+        }
+      }
+      
+      // General character limit for other text-based types
+      if (type !== 'file' && type !== 'choice' && type !== 'select' && !['email', 'date'].includes(type) && !isPhoneQuestion) {
+        const maxLength = 1000
+        if (value.length > maxLength) {
+          value = value.slice(0, maxLength)
+        }
+      }
+    }
+    
+    setInput(value)
+  }
+
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
@@ -552,12 +769,12 @@ export default function ChatInterface() {
     setUploadingFiles([blob.type === 'audio/wav' ? 'voice-note.wav' : 'voice-note.webm'])
     try {
       const uploadResponse = await uploadVoiceNoteToS3(blob, customerUuid)
-      const fileKey = uploadResponse.file_key
-      if (!fileKey) throw new Error('No file_key from voice note upload')
+      const filePath = uploadResponse.file_path
+      if (!filePath) throw new Error('No file_path from voice note upload')
       const response: SubmitAnswerResponse = await submitAnswer(
         customerUuid,
         currentQuestion.field,
-        fileKey,
+        filePath,
         'file'
       )
       setCurrentPhase(response.current_phase)
@@ -871,7 +1088,7 @@ export default function ChatInterface() {
               aria-label="Stop and send"
             >
               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+                <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
               </svg>
             </button>
           </div>
@@ -886,7 +1103,7 @@ export default function ChatInterface() {
                 ref={dateInputRef}
                 type="date"
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={handleInputChange}
                 placeholder="YYYY-MM-DD"
                 className="w-full bg-[#2A3942] text-white placeholder-[#8696A0] rounded-lg px-4 py-2.5 focus:outline-none focus:ring-1 focus:ring-[#00A884] text-sm"
                 disabled={isLoading || isComplete || !currentQuestion}
@@ -895,7 +1112,7 @@ export default function ChatInterface() {
               <textarea
                 ref={textInputRef}
                 value={input}
-                onChange={(e) => setInput(e.target.value)}
+                onChange={handleInputChange}
                 onKeyPress={handleKeyPress}
                 placeholder={isComplete ? 'Activation completed' : currentQuestion ? `Type your answer...` : 'Waiting...'}
                 className="w-full resize-none bg-[#2A3942] text-white placeholder-[#8696A0] rounded-lg px-4 py-2.5 pr-12 focus:outline-none focus:ring-1 focus:ring-[#00A884] max-h-32 min-h-11 text-sm"
@@ -904,18 +1121,37 @@ export default function ChatInterface() {
               />
             )}
           </div>
-          <button
-            type="button"
-            onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
-            disabled={isLoading || isComplete || !currentQuestion}
-            className="bg-[#2A3942] text-[#8696A0] hover:text-[#00A884] rounded-full p-3 hover:bg-[#344047] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
-            aria-label={isRecording ? 'Stop recording' : 'Record voice note'}
-            title="Record voice note"
-          >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-              <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-            </svg>
-          </button>
+          {(() => {
+            if (!currentQuestion) return null
+            const field = currentQuestion.field.toLowerCase()
+            const questionText = currentQuestion.question.toLowerCase()
+            const isNumericInput =
+              currentQuestion.type === 'number' ||
+              currentQuestion.type === 'date' ||
+              field.includes('gst') ||
+              field.includes('percentage') ||
+              field.includes('warranty') ||
+              field.includes('period') ||
+              questionText.includes('gst percentage') ||
+              questionText.includes('percentage') ||
+              questionText.includes('warranty period') ||
+              questionText.includes('months')
+            
+            return (
+              <button
+                type="button"
+                onClick={isRecording ? stopVoiceRecording : startVoiceRecording}
+                disabled={isLoading || isComplete || isNumericInput}
+                className="bg-[#2A3942] text-[#8696A0] hover:text-[#00A884] rounded-full p-3 hover:bg-[#344047] disabled:opacity-50 disabled:cursor-not-allowed transition-colors shrink-0"
+                aria-label={isRecording ? 'Stop recording' : 'Record voice note'}
+                title={isNumericInput ? 'Voice note not available for this input type' : 'Record voice note'}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
+                </svg>
+              </button>
+            )
+          })()}
           <button
             onClick={handleSend}
             disabled={isLoading || isComplete || !currentQuestion || !input.trim()}
@@ -928,7 +1164,7 @@ export default function ChatInterface() {
               viewBox="0 0 20 20"
               fill="currentColor"
             >
-              <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+              <path fillRule="evenodd" d="M10.293 3.293a1 1 0 011.414 0l6 6a1 1 0 010 1.414l-6 6a1 1 0 01-1.414-1.414L14.586 11H3a1 1 0 110-2h11.586l-4.293-4.293a1 1 0 010-1.414z" clipRule="evenodd" />
             </svg>
           </button>
         </div>

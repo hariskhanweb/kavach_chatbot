@@ -55,16 +55,17 @@ export interface InvoiceUploadResponse {
 
 export interface VoiceNoteUploadResponse {
   success: boolean
-  file_key?: string
-  bucket?: string
+  file_path?: string
+  file_name?: string
+  file_size?: number
   message?: string
 }
 
 /**
- * Upload voice note (WAV or webm/opus from MediaRecorder) to S3.
+ * Upload voice note (WAV or webm/opus from MediaRecorder) to backend filesystem.
  * POST /api/v1/partner/kavach-activation/{customer_uuid}/upload-voice-note/
- * Request: form field "file" (audio/wav or audio/webm).
- * Response: success, file_key, bucket, message.
+ * Request: form field "audio_file" (audio/wav, audio/webm, audio/mp3, etc.).
+ * Response: success, file_path, file_name, file_size, message.
  */
 export async function uploadVoiceNoteToS3(
   audioBlob: Blob,
@@ -75,7 +76,7 @@ export async function uploadVoiceNoteToS3(
   const isWav = audioBlob.type === 'audio/wav'
   const filename = isWav ? 'voice-note.wav' : 'voice-note.webm'
   const file = new File([audioBlob], filename, { type: audioBlob.type || 'audio/webm' })
-  formData.append('file', file)
+  formData.append('audio_file', file)
 
   const response = await fetch(endpoint, {
     method: 'POST',
@@ -88,13 +89,14 @@ export async function uploadVoiceNoteToS3(
   }
 
   const data = await response.json()
-  if (!data.file_key) {
-    throw new Error('Invalid response from voice note upload: missing file_key')
+  if (!data.file_path) {
+    throw new Error('Invalid response from voice note upload: missing file_path')
   }
   return {
     success: data.success !== undefined ? data.success : true,
-    file_key: data.file_key,
-    bucket: data.bucket,
+    file_path: data.file_path,
+    file_name: data.file_name,
+    file_size: data.file_size,
     message: data.message,
   }
 }
@@ -193,7 +195,7 @@ export async function submitAnswer(
 ): Promise<SubmitAnswerResponse> {
   const endpoint = SUBMIT_ANSWER_ENDPOINT(customerUuid)
 
-  // Handle voice note: answer is already-uploaded file_key (from uploadVoiceNoteToS3)
+  // Handle voice note: answer is already-uploaded file_path (from uploadVoiceNoteToS3)
   if (questionType === 'file' && typeof answer === 'string') {
     const response = await fetch(endpoint, {
       method: 'POST',
