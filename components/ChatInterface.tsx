@@ -49,7 +49,6 @@ export default function ChatInterface() {
   const textInputRef = useRef<HTMLTextAreaElement>(null)
   const dateInputRef = useRef<HTMLInputElement>(null)
   const [isRecording, setIsRecording] = useState(false)
-  const [recordedBlob, setRecordedBlob] = useState<Blob | null>(null)
   const [recordingDuration, setRecordingDuration] = useState(0)
   const voiceRecorderRef = useRef<VoiceRecorder | null>(null)
   const recordingIntervalRef = useRef<NodeJS.Timeout | null>(null)
@@ -470,7 +469,6 @@ export default function ChatInterface() {
       voiceRecorderRef.current = recorder
       await recorder.start()
       setIsRecording(true)
-      setRecordedBlob(null)
       setRecordingDuration(0)
       recordingIntervalRef.current = setInterval(() => {
         setRecordingDuration((d) => d + 1)
@@ -506,8 +504,8 @@ export default function ChatInterface() {
         recordingIntervalRef.current = null
       }
       setIsRecording(false)
-      setRecordedBlob(blob)
       setRecordingDuration(0)
+      await sendVoiceNoteWithBlob(blob)
     } catch (err) {
       console.error('Stop recording error:', err)
       voiceRecorderRef.current = null
@@ -516,7 +514,6 @@ export default function ChatInterface() {
         recordingIntervalRef.current = null
       }
       setIsRecording(false)
-      setRecordedBlob(null)
       setRecordingDuration(0)
     }
   }
@@ -531,14 +528,11 @@ export default function ChatInterface() {
       recordingIntervalRef.current = null
     }
     setIsRecording(false)
-    setRecordedBlob(null)
     setRecordingDuration(0)
   }
 
-  const sendVoiceNote = async () => {
-    if (!recordedBlob || !customerUuid || !currentQuestion) return
-    const blob = recordedBlob
-    setRecordedBlob(null)
+  const sendVoiceNoteWithBlob = async (blob: Blob) => {
+    if (!customerUuid || !currentQuestion) return
     const blobUrl = URL.createObjectURL(blob)
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -842,71 +836,46 @@ export default function ChatInterface() {
           </div>
         )}
         
-        {/* Voice note recording bar - WhatsApp style */}
-        {!isComplete && currentQuestion && (isRecording || recordedBlob) && (
+        {/* Voice note recording bar - stop = send immediately */}
+        {!isComplete && currentQuestion && isRecording && (
           <div className="flex items-center gap-3 py-2 px-3 bg-[#2A3942] rounded-lg">
-            {isRecording ? (
-              <>
-                <div className="flex items-center gap-2 flex-1">
-                  <div className="flex items-end gap-0.5 h-5">
-                    {[4, 8, 6, 10, 5].map((h, i) => (
-                      <div
-                        key={i}
-                        className="w-1 bg-[#00A884] rounded-full animate-pulse"
-                        style={{ height: h, animationDelay: `${i * 0.15}s` }}
-                      />
-                    ))}
-                  </div>
-                  <span className="text-sm text-[#8696A0]">
-                    {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={stopVoiceRecording}
-                  className="bg-[#00A884] text-white rounded-full p-2.5 hover:bg-[#06CF9C] transition-colors"
-                  aria-label="Stop recording"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path fillRule="evenodd" d="M5 5v10h10V5H5zM3 3a2 2 0 012-2h10a2 2 0 012 2v14a2 2 0 01-2 2H5a2 2 0 01-2-2V3z" clipRule="evenodd" />
-                  </svg>
-                </button>
-              </>
-            ) : recordedBlob ? (
-              <>
-                <div className="flex items-center gap-2 flex-1">
-                  <span className="text-[#00A884]">
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M7 4a3 3 0 016 0v4a3 3 0 11-6 0V4zm4 10.93A7.001 7.001 0 0017 8a1 1 0 10-2 0A5 5 0 015 8a1 1 0 00-2 0 7.001 7.001 0 006 6.93V17H6a1 1 0 100 2h8a1 1 0 100-2h-3v-2.07z" clipRule="evenodd" />
-                    </svg>
-                  </span>
-                  <span className="text-sm text-white">Voice note ready</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={cancelVoiceNote}
-                  className="text-[#8696A0] hover:text-white text-sm font-medium px-3 py-1.5 rounded"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={sendVoiceNote}
-                  disabled={isLoading}
-                  className="bg-[#00A884] text-white rounded-full p-2.5 hover:bg-[#06CF9C] disabled:opacity-50 transition-colors"
-                  aria-label="Send voice note"
-                >
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
-                    <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
-                  </svg>
-                </button>
-              </>
-            ) : null}
+            <div className="flex items-center gap-2 flex-1">
+              <div className="flex items-end gap-0.5 h-5">
+                {[4, 8, 6, 10, 5].map((h, i) => (
+                  <div
+                    key={i}
+                    className="w-1 bg-[#00A884] rounded-full animate-pulse"
+                    style={{ height: h, animationDelay: `${i * 0.15}s` }}
+                  />
+                ))}
+              </div>
+              <span className="text-sm text-[#8696A0]">
+                {Math.floor(recordingDuration / 60)}:{(recordingDuration % 60).toString().padStart(2, '0')}
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={cancelVoiceNote}
+              className="text-[#8696A0] hover:text-white text-sm font-medium px-3 py-1.5 rounded"
+              aria-label="Cancel recording"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={stopVoiceRecording}
+              className="bg-[#00A884] text-white rounded-full p-2.5 hover:bg-[#06CF9C] transition-colors"
+              aria-label="Stop and send"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                <path d="M10.894 2.553a1 1 0 00-1.788 0l-7 14a1 1 0 001.169 1.409l5-1.429A1 1 0 009 15.571V11a1 1 0 112 0v4.571a1 1 0 00.725.962l5 1.428a1 1 0 001.17-1.408l-7-14z" />
+              </svg>
+            </button>
           </div>
         )}
 
         {/* Text/Number/Date input area - Hidden for choice and file questions */}
-        {!isComplete && currentQuestion && currentQuestion.type !== 'choice' && currentQuestion.type !== 'file' && !isRecording && !recordedBlob && (
+        {!isComplete && currentQuestion && currentQuestion.type !== 'choice' && currentQuestion.type !== 'file' && !isRecording && (
         <div className="flex items-start space-x-2">
           <div className="flex-1 relative">
             {currentQuestion?.type === 'date' ? (
